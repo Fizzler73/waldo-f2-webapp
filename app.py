@@ -214,7 +214,11 @@ if "analysis_data" in st.session_state:
     st.dataframe(df_out, use_container_width=True)
 
     # Use the current cfas value for the filename, defaulting to 'job' if empty
-    safe_cfas = cfas.strip() if cfas else "job"
+    # We prefer session_state value if available, but fallback to the variable if needed
+    current_cfas = st.session_state.get("cfas", "").strip() or "job"
+    
+    # Simple sanitization to prevent invalid filenames
+    safe_cfas = re.sub(r'[\\/*?:"<>|]', "", current_cfas)
     fname = f"{safe_cfas}_job.csv"
 
     st.download_button(
