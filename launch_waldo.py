@@ -6,7 +6,7 @@ import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Full path to your app
-app_path = os.path.join(current_dir, "waldo_f2_app.py")
+app_path = os.path.join(current_dir, "app.py")
 
 # Launch the Streamlit app
 try:
