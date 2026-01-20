@@ -221,10 +221,13 @@ if "analysis_data" in st.session_state:
     safe_cfas = re.sub(r'[\\/*?:"<>|]', "", current_cfas)
     fname = f"{safe_cfas}_job.csv"
 
+    st.success(f"Ready to download: **{fname}**")
+
     st.download_button(
         label="\U0001F4E5 Download Job CSV",
         data=csv_output.getvalue(),
         file_name=fname,
-        mime="text/csv"
+        mime="text/csv",
+        key=f"dl_{fname}"
     )
 
