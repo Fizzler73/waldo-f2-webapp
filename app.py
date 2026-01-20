@@ -66,149 +66,161 @@ with st.form("job_config"):
         clear_form = st.form_submit_button("🧹 Clear Form")
 
 if clear_form:
-    for key in ["cfas", "clli", "co", "tech_id", "pfp", "opm_count", "iolm_count", "uploaded_file"]:
+    for key in ["cfas", "clli", "co", "tech_id", "pfp", "opm_count", "iolm_count", "uploaded_file", "analysis_data", "extracted_preview"]:
         if key in st.session_state:
             del st.session_state[key]
     st.rerun()
 
+# Processing Logic
 if uploaded_file and submitted:
     if not cfas:
         st.error("CFAS # is required.")
-        st.stop()
-
-    xl = pd.ExcelFile(uploaded_file)
-
-    try:
-        pon_test_df = xl.parse("PON TEST SHEET", header=None)
-    except Exception as e:
-        st.error(f"Error loading PON TEST SHEET: {e}")
-        st.stop()
-
-    st.success("File loaded and form submitted. Parsing test sheet and preparing CSV output.")
-
-    expected_columns = {
-        "TERMINAL": None,
-        "CABLE ID": None,
-        "POWER TEST STRAND": None,
-        "OTDR TEST STRAND": None
-    }
-
-    header_row_index = None
-    found_headers = []
-
-    def normalize(text):
-        return re.sub(r"[^A-Z0-9]", "", text.upper())
-
-    for idx, row in pon_test_df.iterrows():
-        for col_idx, cell in row.items():
-            if pd.isna(cell):
-                continue
-            cell_str = normalize(str(cell))
-            found_headers.append(cell_str)
-            for key in expected_columns:
-                if normalize(key) in cell_str and expected_columns[key] is None:
-                    expected_columns[key] = col_idx
-        if all(v is not None for v in expected_columns.values()):
-            header_row_index = idx
-            break
-
-    st.info(f"Detected normalized headers in sheet: {set(found_headers)}")
-
-    if all(v is not None for v in expected_columns.values()):
-        parsed_df = xl.parse("PON TEST SHEET", header=header_row_index)
-
-        parsed_df.columns = [normalize(str(col)) for col in parsed_df.columns]
-
-        column_map = {
-            "TERMINAL": next((col for col in parsed_df.columns if "TERMINAL" in col), None),
-            "CABLE ID": next((col for col in parsed_df.columns if "CABLEID" in col), None),
-            "POWER TEST STRAND": next((col for col in parsed_df.columns if "POWERTESTSTRAND" in col), None),
-            "OTDR TEST STRAND": next((col for col in parsed_df.columns if "OTDRTESTSTRAND" in col), None)
-        }
-
-        if None in column_map.values():
-            st.error(f"Column mapping failed. Found: {column_map}")
-            st.stop()
-
-        extracted_df = parsed_df[[column_map[k] for k in column_map]]
-        extracted_df.columns = list(column_map.keys())
-
-        st.subheader("\U0001F4C2 Extracted Test Data")
-        st.dataframe(extracted_df.head(20))
-
-        test_rows = []
-        has_olm = olm_config and olm_config.lower() != "no configuration"
-        has_opm = opm_config and opm_config.lower() != "no configuration"
-        test_config = ""
-        if has_olm:
-            test_config = olm_config + ".iolmcfg"
-        if has_opm:
-            test_config = (test_config + "|" if test_config else "") + opm_config + ".opmcfg"
-
-        for idx, row in extracted_df.iterrows():
-            terminal = str(row["TERMINAL"]).strip() if pd.notna(row["TERMINAL"]) else ""
-            caid = str(row["CABLE ID"]).strip() if pd.notna(row["CABLE ID"]) else ""
-            power = row["POWER TEST STRAND"]
-            otdr = row["OTDR TEST STRAND"]
-
-            try:
-                power_port = int(power)
-                test_name = f"{power_port} - {terminal}_1_{caid}"
-                line = [cfas, tech_id, "AT&T", "", "", test_name, caid, power_port, clli, co, pfp, "OPM", "", test_config]
-                test_rows.append(line)
-            except:
-                pass
-
-            if isinstance(otdr, str):
-                ports = []
-                parts = otdr.split("/")
-                for part in parts:
-                    if "-" in part:
-                        start, end = map(int, part.split("-"))
-                        ports.extend(range(start, end+1))
-                    else:
-                        ports.append(int(part))
-                for i, port in enumerate(ports):
-                    test_name = f"{port} - {terminal}_{i+2}_{caid}"
-                    line = ["", "", "", "", "", test_name, caid, port, clli, co, pfp, "", "iOLM", ""]
-                    test_rows.append(line)
-
-        if test_rows:
-            st.session_state["opm_count"] = sum(1 for row in test_rows if row[11] == "OPM")
-            st.session_state["iolm_count"] = sum(1 for row in test_rows if row[12] == "iOLM")
-
-            st.subheader("✅ Select Test Types to Include in Export")
-            include_opm = st.checkbox("Include OPM Test Points", value=True)
-            include_iolm = st.checkbox("Include iOLM Test Points", value=True)
-
-            filtered_rows = [row for row in test_rows if (row[11] == "OPM" and include_opm) or (row[12] == "iOLM" and include_iolm)]
-            csv_output = io.StringIO()
-            df_out = pd.DataFrame(filtered_rows, columns=[
-                "name", "assignees", "company", "customer", "dueDate",
-                "testPointName", "identifier_Cable ID", "identifier_Fiber ID",
-                "identifier_ALoc", "identifier_ZLoc", "identifier_WireCenterClli",
-                "testType_01", "testType_02", "testConfigurations"
-            ])
-
-            if not df_out.empty:
-                df_out.iloc[1:, 0] = ""
-                df_out.iloc[1:, 1] = ""
-                df_out.iloc[1:, 2] = ""
-                df_out.iloc[1:, 13] = ""
-
-            df_out.to_csv(csv_output, index=False)
-
-            st.subheader("\U0001F4C3 Preview of CSV Output")
-            st.dataframe(df_out, use_container_width=True)
-
-            st.download_button(
-                label="\U0001F4E5 Download Job CSV",
-                data=csv_output.getvalue(),
-                file_name=f"{cfas}_job.csv",
-                mime="text/csv"
-            )
-        else:
-            st.warning("No valid test points were generated from the data.")
     else:
-        st.error("Could not find all required columns in PON TEST SHEET. Check that headers like 'TERMINAL', 'CABLE ID', 'POWER TEST STRAND', and 'OTDR TEST STRAND(S)' exist.")
+        xl = pd.ExcelFile(uploaded_file)
+        try:
+            pon_test_df = xl.parse("PON TEST SHEET", header=None)
+            
+            expected_columns = {
+                "TERMINAL": None,
+                "CABLE ID": None,
+                "POWER TEST STRAND": None,
+                "OTDR TEST STRAND": None
+            }
+            
+            header_row_index = None
+            found_headers = []
+            
+            def normalize(text):
+                return re.sub(r"[^A-Z0-9]", "", text.upper())
+
+            for idx, row in pon_test_df.iterrows():
+                for col_idx, cell in row.items():
+                    if pd.isna(cell):
+                        continue
+                    cell_str = normalize(str(cell))
+                    found_headers.append(cell_str)
+                    for key in expected_columns:
+                        if normalize(key) in cell_str and expected_columns[key] is None:
+                            expected_columns[key] = col_idx
+                if all(v is not None for v in expected_columns.values()):
+                    header_row_index = idx
+                    break
+
+            if all(v is not None for v in expected_columns.values()):
+                parsed_df = xl.parse("PON TEST SHEET", header=header_row_index)
+                parsed_df.columns = [normalize(str(col)) for col in parsed_df.columns]
+                
+                column_map = {
+                    "TERMINAL": next((col for col in parsed_df.columns if "TERMINAL" in col), None),
+                    "CABLE ID": next((col for col in parsed_df.columns if "CABLEID" in col), None),
+                    "POWER TEST STRAND": next((col for col in parsed_df.columns if "POWERTESTSTRAND" in col), None),
+                    "OTDR TEST STRAND": next((col for col in parsed_df.columns if "OTDRTESTSTRAND" in col), None)
+                }
+                
+                if None in column_map.values():
+                    st.error(f"Column mapping failed. Found: {column_map}")
+                else:
+                    extracted_df = parsed_df[[column_map[k] for k in column_map]]
+                    extracted_df.columns = list(column_map.keys())
+                    
+                    # Store extracted data for preview
+                    st.session_state["extracted_preview"] = extracted_df
+                    
+                    test_rows = []
+                    has_olm = olm_config and olm_config.lower() != "no configuration"
+                    has_opm = opm_config and opm_config.lower() != "no configuration"
+                    test_config = ""
+                    if has_olm:
+                        test_config = olm_config + ".iolmcfg"
+                    if has_opm:
+                        test_config = (test_config + "|" if test_config else "") + opm_config + ".opmcfg"
+
+                    for idx, row in extracted_df.iterrows():
+                        terminal = str(row["TERMINAL"]).strip() if pd.notna(row["TERMINAL"]) else ""
+                        caid = str(row["CABLE ID"]).strip() if pd.notna(row["CABLE ID"]) else ""
+                        power = row["POWER TEST STRAND"]
+                        otdr = row["OTDR TEST STRAND"]
+
+                        try:
+                            power_port = int(power)
+                            test_name = f"{power_port} - {terminal}_1_{caid}"
+                            line = [cfas, tech_id, "AT&T", "", "", test_name, caid, power_port, clli, co, pfp, "OPM", "", test_config]
+                            test_rows.append(line)
+                        except:
+                            pass
+
+                        if isinstance(otdr, str):
+                            ports = []
+                            parts = otdr.split("/")
+                            for part in parts:
+                                if "-" in part:
+                                    start, end = map(int, part.split("-"))
+                                    ports.extend(range(start, end+1))
+                                else:
+                                    ports.append(int(part))
+                            for i, port in enumerate(ports):
+                                test_name = f"{port} - {terminal}_{i+2}_{caid}"
+                                line = ["", "", "", "", "", test_name, caid, port, clli, co, pfp, "", "iOLM", ""]
+                                test_rows.append(line)
+                    
+                    if test_rows:
+                        st.session_state["opm_count"] = sum(1 for row in test_rows if row[11] == "OPM")
+                        st.session_state["iolm_count"] = sum(1 for row in test_rows if row[12] == "iOLM")
+                        st.session_state["analysis_data"] = test_rows
+                        st.success("Analysis complete! See results below.")
+                    else:
+                        st.warning("No valid test points were generated.")
+                        
+            else:
+                st.error("Could not find all required columns in PON TEST SHEET.")
+                
+        except Exception as e:
+            st.error(f"Error loading PON TEST SHEET: {e}")
+
+# Rendering Logic (runs on every rerun if data exists)
+if "extracted_preview" in st.session_state:
+    st.subheader("\U0001F4C2 Extracted Test Data")
+    st.dataframe(st.session_state["extracted_preview"].head(20))
+
+if "analysis_data" in st.session_state:
+    test_rows = st.session_state["analysis_data"]
+    
+    st.subheader("✅ Select Test Types to Include in Export")
+    col_chk1, col_chk2 = st.columns(2)
+    with col_chk1:
+        include_opm = st.checkbox("Include OPM Test Points", value=True)
+    with col_chk2:
+        include_iolm = st.checkbox("Include iOLM Test Points", value=True)
+
+    filtered_rows = [row for row in test_rows if (row[11] == "OPM" and include_opm) or (row[12] == "iOLM" and include_iolm)]
+    
+    csv_output = io.StringIO()
+    df_out = pd.DataFrame(filtered_rows, columns=[
+        "name", "assignees", "company", "customer", "dueDate",
+        "testPointName", "identifier_Cable ID", "identifier_Fiber ID",
+        "identifier_ALoc", "identifier_ZLoc", "identifier_WireCenterClli",
+        "testType_01", "testType_02", "testConfigurations"
+    ])
+
+    if not df_out.empty:
+        df_out.iloc[1:, 0] = ""
+        df_out.iloc[1:, 1] = ""
+        df_out.iloc[1:, 2] = ""
+        df_out.iloc[1:, 13] = ""
+
+    df_out.to_csv(csv_output, index=False)
+
+    st.subheader("\U0001F4C3 Preview of CSV Output")
+    st.dataframe(df_out, use_container_width=True)
+
+    # Use the current cfas value for the filename, defaulting to 'job' if empty
+    safe_cfas = cfas.strip() if cfas else "job"
+    fname = f"{safe_cfas}_job.csv"
+
+    st.download_button(
+        label="\U0001F4E5 Download Job CSV",
+        data=csv_output.getvalue(),
+        file_name=fname,
+        mime="text/csv"
+    )
 
