@@ -26,6 +26,19 @@ st.header("📁 Step 1: Upload PON TEST SHEET")
 uploaded_file = st.file_uploader("Upload PON TEST SHEET (.xlsx)", type=["xlsx"], key="uploaded_file")
 
 if uploaded_file:
+    # Check if this is a new file or if we haven't extracted CFAS yet
+    # We use a simple check: if 'last_uploaded' is different from current, or if cfas is empty
+    file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+    if st.session_state.get("last_uploaded_file_id") != file_id:
+        st.session_state["last_uploaded_file_id"] = file_id
+        try:
+            # Attempt to extract CFAS from X2 (Row 1, Col 23 -> which is 23 index)
+            # Default logic was .iat[1, 23]
+            extracted_val = pd.read_excel(uploaded_file, sheet_name="PON TEST SHEET", header=None).iat[1, 23]
+            st.session_state["cfas"] = str(extracted_val).strip()
+        except:
+            pass
+    
     st.success(f"✅ File '{uploaded_file.name}' loaded successfully.")
 
 if "opm_count" in st.session_state and "iolm_count" in st.session_state:
@@ -35,17 +48,17 @@ st.header("✍️ Step 2: Enter Job Metadata")
 with st.form("job_config"):
     col1, col2, col3 = st.columns(3)
     with col1:
-        x2_default = ""
-        if uploaded_file:
-            try:
-                x2_default = pd.read_excel(uploaded_file, sheet_name="PON TEST SHEET", header=None).iat[1, 23]
-            except:
-                pass
+        if "cfas" not in st.session_state:
+            st.session_state["cfas"] = ""
         if "clli" not in st.session_state:
             st.session_state["clli"] = ""
         if "co" not in st.session_state:
             st.session_state["co"] = ""
-        cfas = st.text_input("CFAS # (Required)", value=str(x2_default).strip(), max_chars=20, key="cfas")
+            
+        # The text_input is bound to session_state keys automatically if 'key' is provided, 
+        # but we need to ensure the initial value logic doesn't override it incorrectly.
+        # By not setting 'value', we let 'key' handle the two-way binding with session_state.
+        cfas = st.text_input("CFAS # (Required)", max_chars=20, key="cfas")
         clli = st.text_input("Wire Center CLLI", value=st.session_state["clli"], key="clli")
         co = st.text_input("Central Office", value=st.session_state["co"], key="co")
     with col2:
